@@ -1,0 +1,37 @@
+{
+  "name": "@xpell/xai-providers",
+  "version": "2.0.2",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./azure": {
+      "import": "./dist/azure/index.js",
+      "types": "./dist/azure/index.d.ts"
+    },
+    "./aime": {
+      "import": "./dist/aime/index.js",
+      "types": "./dist/aime/index.d.ts"
+    },
+    "./mock": {
+      "import": "./dist/mock/index.js",
+      "types": "./dist/mock/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p ."
+  },
+  "peerDependencies": {
+    "@xpell/node": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    
+  }
+}
