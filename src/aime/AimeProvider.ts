@@ -2,9 +2,10 @@ import type {
   XAIInput,
   XAIProvider,
   XAIResult,
+
 } from "@xpell/node";
 
-import { _xlog } from "@xpell/node";
+import { _xlog, _xu } from "@xpell/node";
 type Dict =
   Record<string, unknown>;
 
@@ -14,15 +15,7 @@ export type AimeProviderConfig = {
   timeoutMs?: number;
 };
 
-function is_plain_object(
-  value: unknown
-): value is Dict {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value)
-  );
-}
+const is_plain_object = (_xu as any).is_plain_object;
 
 function ensure_optional_string(
   value: unknown
@@ -69,7 +62,7 @@ function sanitize_connection_error(
 }
 
 function extract_result_payload(
-  raw: unknown
+  raw: any
 ): Dict | undefined {
   if (!is_plain_object(raw)) {
     return undefined;
@@ -94,13 +87,13 @@ function make_wormhole_request_id() {
     .slice(2)}`;
 }
 
-export class AimeProvider
-  implements XAIProvider {
 
+
+export class AimeProvider implements XAIProvider {
+
+  _provider_id = "aime";
   private _endpoint: string;
-
   private _api_key: string;
-
   private _timeout_ms: number;
 
   constructor(
@@ -123,23 +116,81 @@ export class AimeProvider
         : 60_000;
   }
 
+
+  private async callRouter(
+    op: string,
+    params: Record<string, any>
+  ): Promise<any> {
+    if (!this._endpoint) {
+      throw new Error("Missing Aime endpoint");
+    }
+
+    const controller =
+      new AbortController();
+
+    const timeout =
+      setTimeout(
+        () => controller.abort(),
+        this._timeout_ms
+      );
+
+    try {
+      const response =
+        await fetch(
+          `${this._endpoint}/wh/v2/call`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json"
+            },
+            signal: controller.signal,
+            body: JSON.stringify({
+              _v: 2,
+              _id: make_wormhole_request_id(),
+              _kind: "REQ",
+              _ts: Date.now(),
+              _payload: {
+                _module: "xai-router",
+                _op: op,
+                _params: params
+              }
+            })
+          }
+        );
+
+      const body =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          `Aime provider failed: http_${response.status}`
+        );
+      }
+
+      const result =
+        extract_result_payload(body);
+
+      if (!result) {
+        throw new Error(
+          "Aime provider response missing result payload"
+        );
+      }
+
+      return result;
+
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   async generate(
     input: XAIInput
   ): Promise<XAIResult> {
-
-    if (!this._endpoint) {
-      throw new Error(
-        "Missing Aime endpoint"
-      );
-    }
-
     if (!this._api_key) {
       throw new Error(
         "Missing Aime API key"
       );
     }
-
-    _xlog.log(`AimeProvider.generate:############## `)
 
     const prompt =
       ensure_optional_string(
@@ -152,118 +203,30 @@ export class AimeProvider
       );
     }
 
-    const controller =
-      new AbortController();
-
-    const timeout =
-      setTimeout(
-        () => controller.abort(),
-        this._timeout_ms
+    const result: any =
+      await this.callRouter(
+        "generate",
+        {
+          _api_key: this._api_key,
+          _prompt: prompt,
+          ...(input.system
+            ? { _system: input.system }
+            : {}),
+          ...(input.response_format
+            ? { _response_format: input.response_format }
+            : {})
+        }
       );
-
-    let response: Response;
-
-    try {
-      response =
-        await fetch(
-          `${this._endpoint}/wh/v2/call`,
-          {
-            method: "POST",
-
-            headers: {
-              "content-type":
-                "application/json"
-            },
-
-            signal:
-              controller.signal,
-
-            body:
-              JSON.stringify({
-                _v: 2,
-                _id:
-                  make_wormhole_request_id(),
-                _kind:
-                  "REQ",
-                _ts:
-                  Date.now(),
-                _payload: {
-                  _module:
-                    "xai-router",
-                  _op:
-                    "generate",
-                  _params: {
-                    _api_key:
-                      this._api_key,
-                    _prompt:
-                      prompt,
-                    ...(input.system
-                      ? {
-                        _system:
-                          input.system
-                      }
-                      : {}),
-                    ...(input.response_format
-                      ? {
-                        _response_format:
-                          input.response_format
-                      }
-                      : {})
-                  }
-                }
-              })
-          }
-        );
-    } catch (err) {
-      throw new Error(
-        `Aime provider request failed: ` +
-        sanitize_connection_error(err)
-      );
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    let body: unknown;
-
-    try {
-      body =
-        await response.json();
-    } catch {
-      throw new Error(
-        "Aime provider returned non-JSON response"
-      );
-    }
-
-    if (!response.ok) {
-      throw new Error(
-        `Aime provider failed: http_${response.status}`
-      );
-    }
-
-    const result =
-      extract_result_payload(
-        body
-      );
-
-    if (!result) {
-      throw new Error(
-        "Aime provider response missing result payload"
-      );
-    }
 
     if (result._ok !== true) {
       const code =
         is_plain_object(result._error)
-          ? ensure_optional_string(
-            result._error._code
-          )
+          ? ensure_optional_string(result._error._code)
           : undefined;
 
       const message =
         is_plain_object(result._error)
-          ? ensure_optional_string(
-            result._error._message
-          )
+          ? ensure_optional_string(result._error._message)
           : undefined;
 
       throw new Error(
@@ -277,17 +240,6 @@ export class AimeProvider
       ensure_optional_string(
         result._text
       );
-    const usage =
-      is_plain_object(result._usage)
-        ? {
-          input_tokens:
-            Number(result._usage._input_tokens ?? 0),
-          output_tokens:
-            Number(result._usage._output_tokens ?? 0),
-          total_tokens:
-            Number(result._usage._total_tokens ?? 0)
-        }
-        : undefined;
 
     if (!text) {
       throw new Error(
@@ -295,11 +247,102 @@ export class AimeProvider
       );
     }
 
+    const usage =
+      is_plain_object(result._usage)
+        ? {
+          input_tokens: Number(result._usage._input_tokens ?? 0),
+          output_tokens: Number(result._usage._output_tokens ?? 0),
+          total_tokens: Number(result._usage._total_tokens ?? 0)
+        }
+        : undefined;
+
     return {
       text,
-      raw:
-        body,
+      raw: result,
       usage
+    };
+  }
+
+  async testKey() {
+    if (!this._api_key) {
+      return {
+        valid: false,
+        message: "Missing API key"
+      };
+    }
+
+    try {
+      const result =
+        await this.callRouter(
+          "test-key",
+          {
+            _api_key:
+              this._api_key
+          }
+        );
+
+      if (result._ok !== true) {
+        return {
+          valid: false,
+          message:
+            ensure_optional_string(
+              result?._error?._message
+            )
+        };
+      }
+
+      return {
+        valid: true,
+        account:
+          ensure_optional_string(
+            result._account
+          ),
+        account_id:
+          ensure_optional_string(
+            result._account_id
+          ),
+        raw: result
+      };
+
+    } catch (err) {
+      return {
+        valid: false,
+        message:
+          err instanceof Error
+            ? err.message
+            : String(err)
+      };
+    }
+  }
+
+  setApiKey(apiKey: string): void {
+    this._api_key =
+      ensure_optional_string(apiKey) ?? "";
+  }
+
+  configure(config: Record<string, any>): void {
+    if (typeof config.apiKey === "string") {
+      this.setApiKey(config.apiKey);
+    }
+
+    if (typeof config.endpoint === "string") {
+      this._endpoint =
+        normalize_endpoint(config.endpoint);
+    }
+
+    if (
+      typeof config.timeoutMs === "number" &&
+      Number.isFinite(config.timeoutMs)
+    ) {
+      this._timeout_ms = config.timeoutMs;
+    }
+  }
+
+  async getMetadata() {
+    return {
+      provider: this._provider_id,
+      connected: Boolean(this._api_key && this._endpoint),
+      endpoint: this._endpoint
     };
   }
 }

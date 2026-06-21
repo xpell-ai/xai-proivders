@@ -1,6 +1,6 @@
 {
   "name": "@xpell/xai-providers",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -26,7 +26,8 @@
     "build": "tsc -p ."
   },
   "peerDependencies": {
-    "@xpell/node": "workspace:*"
+    "@xpell/node": "^2.0.3",
+    "@xpell/core": "^2.0.3"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

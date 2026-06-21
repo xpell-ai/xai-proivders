@@ -4,6 +4,8 @@ import type {
   XAIResult
 } from "@xpell/node";
 
+import { _xu } from "@xpell/node";
+
 const AZURE_OPENAI_API_VERSION =
   "2024-02-15-preview";
 
@@ -26,16 +28,7 @@ type AzureChatMessage = {
   content: string;
 };
 
-function is_plain_object(
-  value: unknown
-): value is Dict {
-
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value)
-  );
-}
+const is_plain_object = (_xu as any).is_plain_object;
 
 function ensure_optional_string(
   value: unknown
@@ -85,7 +78,7 @@ function sanitize_connection_error(
 }
 
 function extract_chat_text(
-  raw: unknown
+  raw: any
 ): string | undefined {
 
   if (!is_plain_object(raw)) {
@@ -153,7 +146,7 @@ function extract_chat_text(
 }
 
 function extract_usage(
-  raw: unknown
+  raw: any
 ) {
   if (!is_plain_object(raw)) {
     return undefined;
@@ -189,14 +182,11 @@ function extract_usage(
 export class AzureProvider
   implements XAIProvider {
 
+  _provider_id = "azure";
   private _endpoint: string;
-
   private _api_key: string;
-
   private _deployment: string;
-
   private _api_version: string;
-
   private _temperature?: number;
 
   constructor(
@@ -340,7 +330,7 @@ export class AzureProvider
       );
     }
 
-    let body: unknown;
+    let body: any;
 
     try {
 
