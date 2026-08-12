@@ -209,9 +209,23 @@ export class AimeProvider implements XAIProvider {
         {
           _api_key: this._api_key,
           _prompt: prompt,
+
+          ...(input._task
+            ? { _task: input._task }
+            : {}),
+
+          ...(input._capability
+            ? { _capability: input._capability }
+            : {}),
+
           ...(input.system
             ? { _system: input.system }
             : {}),
+
+          ...(input.context
+            ? { _context: input.context }
+            : {}),
+
           ...(input.response_format
             ? { _response_format: input.response_format }
             : {})

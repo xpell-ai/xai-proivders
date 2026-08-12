@@ -1,6 +1,6 @@
 {
   "name": "@xpell/xai-providers",
-  "version": "2.0.4",
+  "version": "2.0.7",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -28,17 +28,23 @@
     "./mock": {
       "import": "./dist/mock/index.js",
       "types": "./dist/mock/index.d.ts"
+    },
+    "./openai": {
+      "import": "./dist/openai/index.js",
+      "types": "./dist/openai/index.d.ts"
+    },
+    "./gemini": {
+      "import": "./dist/gemini/index.js",
+      "types": "./dist/gemini/index.d.ts"
     }
   },
   "scripts": {
     "build": "tsc -p ."
   },
-  "peerDependencies": {
-    "@xpell/node": "^2.0.3",
-    "@xpell/core": "^2.0.3"
+  "dependencies": {
+    "@xpell/node": "^2.0.7"
   },
   "devDependencies": {
     "typescript": "^5.9.3"
-  },
-  "dependencies": {}
+  }
 }
