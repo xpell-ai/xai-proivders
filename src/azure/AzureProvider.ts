@@ -1,10 +1,15 @@
 import type {
+  XAIFinishReason,
   XAIInput,
+  XAIMessage,
   XAIProvider,
-  XAIResult
+  XAIResult,
+  XAIToolCall,
+  XAIToolChoice,
+  XAIToolDefinition
 } from "@xpell/node";
 
-import { _xu } from "@xpell/node";
+import { _xu, normalizeXAIInput } from "@xpell/node";
 
 const AZURE_OPENAI_API_VERSION =
   "2024-02-15-preview";
@@ -20,15 +25,33 @@ export type AzureProviderConfig = {
   temperature?: number;
 };
 
-type AzureChatMessage = {
-  role:
-  | "system"
-  | "user"
-  | "assistant";
-  content: string;
+type AzureChatMessage =
+  | {
+    role: "system" | "user";
+    content: string;
+  }
+  | {
+    role: "assistant";
+    content: string | null;
+    tool_calls?: AzureToolCall[];
+  }
+  | {
+    role: "tool";
+    tool_call_id: string;
+    content: string;
+  };
+
+type AzureToolCall = {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string;
+  };
 };
 
-const is_plain_object = (_xu as any).is_plain_object;
+const is_plain_object =
+  (_xu as any).is_plain_object as (value: unknown) => value is Dict;
 
 function ensure_optional_string(
   value: unknown
@@ -179,6 +202,162 @@ function extract_usage(
   };
 }
 
+function text_from_message(
+  message: XAIMessage
+): string {
+  if (message._content.some((part) => part._type === "image")) {
+    throw new Error("E_XAI_AZURE_IMAGE_UNSUPPORTED");
+  }
+
+  return message._content
+    .map((part) => part._type === "text" ? part._text : "")
+    .filter(Boolean)
+    .join("\n");
+}
+
+function azure_messages_from_input(
+  input: XAIInput
+): AzureChatMessage[] {
+  const normalized = normalizeXAIInput(input);
+  const messages: AzureChatMessage[] = [];
+  const system = ensure_optional_string(input.system);
+
+  if (system) {
+    messages.push({ role: "system", content: system });
+  }
+
+  for (const message of normalized.messages) {
+    if (message._role === "tool") {
+      messages.push({
+        role: "tool",
+        tool_call_id: message._tool_call_id,
+        content: text_from_message(message)
+      });
+      continue;
+    }
+
+    if (message._role === "assistant") {
+      const content = text_from_message(message);
+      messages.push({
+        role: "assistant",
+        content: content || null,
+        ...(message._tool_calls?.length
+          ? {
+            tool_calls: message._tool_calls.map((call) => ({
+              id: call._id,
+              type: "function" as const,
+              function: {
+                name: call._name,
+                arguments: JSON.stringify(call._arguments)
+              }
+            }))
+          }
+          : {})
+      });
+      continue;
+    }
+
+    messages.push({
+      role: message._role,
+      content: text_from_message(message)
+    });
+  }
+
+  return messages;
+}
+
+function azure_tools(
+  tools: XAIToolDefinition[]
+) {
+  return tools.map((tool) => ({
+    type: "function" as const,
+    function: {
+      name: tool._name,
+      ...(tool._description ? { description: tool._description } : {}),
+      parameters: tool._input_schema
+    }
+  }));
+}
+
+function azure_tool_choice(
+  choice: XAIToolChoice | undefined
+): unknown {
+  if (!choice || typeof choice === "string") {
+    return choice;
+  }
+
+  return {
+    type: "function",
+    function: { name: choice._name }
+  };
+}
+
+function extract_tool_calls(
+  raw: any
+): XAIToolCall[] {
+  const choices = is_plain_object(raw) && Array.isArray(raw.choices)
+    ? raw.choices
+    : [];
+  const first = is_plain_object(choices[0]) ? choices[0] : {};
+  const message = is_plain_object(first.message) ? first.message : {};
+  const raw_calls = Array.isArray(message.tool_calls)
+    ? message.tool_calls
+    : [];
+
+  return raw_calls.map((raw_call: unknown) => {
+    if (!is_plain_object(raw_call) || !is_plain_object(raw_call.function)) {
+      throw new Error("E_XAI_TOOL_CALL_INVALID");
+    }
+
+    const provider_function = raw_call.function as Dict;
+    const id = ensure_optional_string(raw_call.id);
+    const name = ensure_optional_string(provider_function.name);
+    if (!id || !name) {
+      throw new Error("E_XAI_TOOL_CALL_INVALID");
+    }
+
+    let args: unknown;
+    try {
+      args = typeof provider_function.arguments === "string"
+        ? JSON.parse(provider_function.arguments)
+        : provider_function.arguments;
+    } catch {
+      throw new Error("E_XAI_TOOL_ARGUMENTS_INVALID");
+    }
+
+    if (!is_plain_object(args)) {
+      throw new Error("E_XAI_TOOL_ARGUMENTS_INVALID");
+    }
+
+    return {
+      _id: id,
+      _name: name,
+      _arguments: args
+    };
+  });
+}
+
+function finish_reason_from_response(
+  raw: any,
+  has_tool_calls: boolean
+): XAIFinishReason {
+  if (has_tool_calls) {
+    return "tool_calls";
+  }
+
+  const choices = is_plain_object(raw) && Array.isArray(raw.choices)
+    ? raw.choices
+    : [];
+  const first = is_plain_object(choices[0]) ? choices[0] : {};
+
+  switch (first.finish_reason) {
+    case "stop": return "stop";
+    case "length": return "length";
+    case "content_filter": return "content_filter";
+    default: return "other";
+  }
+}
+
 export class AzureProvider
   implements XAIProvider {
 
@@ -245,37 +424,16 @@ export class AzureProvider
       );
     }
 
-    const prompt =
-      ensure_optional_string(
-        input.prompt
-      );
-
-    if (!prompt) {
-      throw new Error(
-        "Missing prompt"
-      );
-    }
-
-    const messages:
-      AzureChatMessage[] = [];
-
-    const system =
-      ensure_optional_string(
-        input.system
-      );
-
-    if (system) {
-
-      messages.push({
-        role: "system",
-        content: system
-      });
-    }
-
-    messages.push({
-      role: "user",
-      content: prompt
-    });
+    const normalized =
+      normalizeXAIInput(input);
+    const messages =
+      azure_messages_from_input(input);
+    const tools =
+      azure_tools(normalized.tools);
+    const tool_choice =
+      azure_tool_choice(normalized.tool_choice);
+    const temperature =
+      input.temperature ?? this._temperature;
 
     const url =
       `${this._endpoint}` +
@@ -306,10 +464,10 @@ export class AzureProvider
 
             messages,
 
-            ...(this._temperature !== undefined
+            ...(temperature !== undefined
               ? {
                 temperature:
-                  this._temperature
+                  temperature
               }
               : {}),
 
@@ -317,6 +475,19 @@ export class AzureProvider
               ? {
                 response_format:
                   input.response_format
+              }
+              : {}),
+
+            ...(typeof input.max_tokens === "number"
+              ? { max_tokens: input.max_tokens }
+              : {}),
+
+            ...(tools.length > 0
+              ? {
+                tools,
+                ...(tool_choice !== undefined
+                  ? { tool_choice }
+                  : {})
               }
               : {})
           })
@@ -371,9 +542,11 @@ export class AzureProvider
     }
 
     const text =
-      extract_chat_text(body);
+      extract_chat_text(body) ?? "";
+    const tool_calls =
+      extract_tool_calls(body);
 
-    if (!text) {
+    if (!text && tool_calls.length === 0) {
 
       throw new Error(
         "Azure OpenAI chat response missing assistant text"
@@ -385,6 +558,8 @@ export class AzureProvider
 
     return {
       text,
+      ...(tool_calls.length > 0 ? { tool_calls } : {}),
+      finish_reason: finish_reason_from_response(body, tool_calls.length > 0),
       raw: body,
       usage
     };
