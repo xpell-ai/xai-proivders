@@ -1,6 +1,6 @@
 {
   "name": "@xpell/xai-providers",
-  "version": "2.0.7",
+  "version": "2.0.8",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -10,7 +10,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "exports": {
     ".": {
@@ -46,7 +47,12 @@
     "@xpell/node": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "@types/node": "^22.0.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xpell-ai/xai-proivders.git"
   }
 }
